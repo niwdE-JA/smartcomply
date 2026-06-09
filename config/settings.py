@@ -108,6 +108,17 @@ REST_FRAMEWORK = {
     'DEFAULT_ORDERING_FIELDS': ['created_at', 'timestamp', 'amount'],
     'DEFAULT_ORDERING': ['-created_at'],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',  # Anonymous users: 100 requests per hour
+        'user': '1000/hour',  # Authenticated users: 1000 requests per hour
+        'transaction_create': '50/minute',  # Transaction creation: 50 per account per minute
+        'rule_management': '30/hour',  # Rule operations: 30 per user per hour
+        'alert_dismissal': '100/hour'  # Alert operations: 100 per user per hour
+    }
 }
 
 # drf-spectacular Configuration
