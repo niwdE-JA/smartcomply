@@ -51,6 +51,7 @@ class Rule(models.Model):
     rule_type = models.CharField(max_length=50, choices=RULE_TYPE_CHOICES)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.CharField(max_length=255, default='system')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -68,6 +69,37 @@ class Rule(models.Model):
     
     def __str__(self):
         return self.name
+
+
+class RuleAuditLog(models.Model):
+    """Model to track changes to monitoring rules (audit trail)."""
+    
+    ACTION_CHOICES = [
+        ('CREATE', 'Created'),
+        ('UPDATE', 'Updated'),
+        ('ACTIVATE', 'Activated'),
+        ('DEACTIVATE', 'Deactivated'),
+        ('DELETE', 'Deleted'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    rule = models.ForeignKey(Rule, on_delete=models.CASCADE, related_name='audit_logs')
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    performed_by = models.CharField(max_length=255, default='system')
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    changes = models.JSONField(default=dict, blank=True)
+    description = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['rule', 'timestamp']),
+            models.Index(fields=['action', 'timestamp']),
+            models.Index(fields=['performed_by', 'timestamp']),
+        ]
+    
+    def __str__(self):
+        return f"{self.rule.name} - {self.action} by {self.performed_by}"
 
 
 class Alert(models.Model):

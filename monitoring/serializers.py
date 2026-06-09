@@ -1,10 +1,10 @@
 """
 Serializers for the monitoring app.
 
-These serializers handle validation and serialization of Transaction, Rule, and Alert models.
+These serializers handle validation and serialization of Transaction, Rule, Alert, and RuleAuditLog models.
 """
 from rest_framework import serializers
-from .models import Transaction, Rule, Alert
+from .models import Transaction, Rule, Alert, RuleAuditLog
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -139,5 +139,50 @@ class AlertSerializer(serializers.ModelSerializer):
             },
             'details': {
                 'help_text': 'Additional alert details (JSON object with rule-specific information)',
+            },
+        }
+
+
+class RuleAuditLogSerializer(serializers.ModelSerializer):
+    """
+    Serializer for RuleAuditLog model.
+    
+    Handles serialization of audit trail entries for rule changes.
+    Tracks who made changes, when, and what was changed.
+    """
+    
+    rule_name = serializers.CharField(source='rule.name', read_only=True)
+    
+    class Meta:
+        model = RuleAuditLog
+        fields = [
+            'id',
+            'rule',
+            'rule_name',
+            'action',
+            'performed_by',
+            'timestamp',
+            'changes',
+            'description',
+        ]
+        read_only_fields = ['id', 'rule', 'action', 'performed_by', 'timestamp', 'changes', 'description']
+        extra_kwargs = {
+            'rule': {
+                'help_text': 'UUID of the rule',
+            },
+            'action': {
+                'help_text': 'Type of action: CREATE, UPDATE, ACTIVATE, DEACTIVATE, DELETE',
+            },
+            'performed_by': {
+                'help_text': 'User or system identifier who performed the action',
+            },
+            'timestamp': {
+                'help_text': 'When the action was performed',
+            },
+            'changes': {
+                'help_text': 'JSON object containing before/after values of changed fields',
+            },
+            'description': {
+                'help_text': 'Human-readable description of the change',
             },
         }

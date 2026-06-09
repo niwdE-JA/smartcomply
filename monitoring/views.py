@@ -13,9 +13,10 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from .models import Transaction, Rule, Alert
-from .serializers import TransactionSerializer, RuleSerializer, AlertSerializer
+from .models import Transaction, Rule, Alert, RuleAuditLog
+from .serializers import TransactionSerializer, RuleSerializer, AlertSerializer, RuleAuditLogSerializer
 from .tasks import evaluate_transaction_rules
+from .audit import create_audit_log, get_field_changes
 
 logger = logging.getLogger(__name__)
 
@@ -205,11 +206,32 @@ class RuleViewSet(viewsets.ModelViewSet):
         """Create rule."""
         rule = serializer.save()
         logger.info(f"Rule created: {rule.name} (type: {rule.rule_type})")
+        
+        # Create audit log entry
+        create_audit_log(
+            rule=rule,
+            action='CREATE',
+            performed_by=rule.created_by,
+            description=f"Rule created: {rule.name} ({rule.rule_type})"
+        )
     
     def perform_update(self, serializer):
         """Update rule."""
+        old_instance = self.get_object()
         rule = serializer.save()
         logger.info(f"Rule updated: {rule.name}")
+        
+        # Track changes
+        changes = get_field_changes(old_instance, rule)
+        
+        # Create audit log entry
+        create_audit_log(
+            rule=rule,
+            action='UPDATE',
+            performed_by='system',
+            changes=changes,
+            description=f"Rule updated: {rule.name}"
+        )
     
     @extend_schema(
         summary='Activate a rule',
@@ -223,6 +245,16 @@ class RuleViewSet(viewsets.ModelViewSet):
         rule.is_active = True
         rule.save()
         logger.info(f"Rule activated: {rule.name}")
+        
+        # Create audit log entry
+        create_audit_log(
+            rule=rule,
+            action='ACTIVATE',
+            performed_by='system',
+            changes={'before': {'is_active': False}, 'after': {'is_active': True}},
+            description=f"Rule activated: {rule.name}"
+        )
+        
         return Response({'status': 'rule activated'})
     
     @extend_schema(
@@ -237,6 +269,16 @@ class RuleViewSet(viewsets.ModelViewSet):
         rule.is_active = False
         rule.save()
         logger.info(f"Rule deactivated: {rule.name}")
+        
+        # Create audit log entry
+        create_audit_log(
+            rule=rule,
+            action='DEACTIVATE',
+            performed_by='system',
+            changes={'before': {'is_active': True}, 'after': {'is_active': False}},
+            description=f"Rule deactivated: {rule.name}"
+        )
+        
         return Response({'status': 'rule deactivated'})
 
 
@@ -352,4 +394,92 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
             return self.get_paginated_response(serializer.data)
         
         serializer = self.get_serializer(alerts, many=True)
+        return Response(serializer.data)
+
+
+class RuleAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API endpoints for viewing rule audit logs.
+    
+    Read-only viewset for tracking all changes made to monitoring rules.
+    Includes:
+    - Who created/modified the rule
+    - When changes were made
+    - What was changed (before/after values)
+    - Description of the change
+    """
+    
+    queryset = RuleAuditLog.objects.all()
+    serializer_class = RuleAuditLogSerializer
+    pagination_class = StandardPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['rule', 'action', 'performed_by']
+    search_fields = ['rule__name', 'performed_by', 'description']
+    ordering_fields = ['timestamp', 'action']
+    ordering = ['-timestamp']
+    
+    @extend_schema(
+        summary='List all audit log entries',
+        description='Retrieve audit trail for rule changes with optional filtering.',
+        parameters=[
+            OpenApiParameter(
+                name='rule',
+                description='Filter by rule UUID',
+                required=False,
+                type=OpenApiTypes.UUID
+            ),
+            OpenApiParameter(
+                name='action',
+                description='Filter by action type (CREATE, UPDATE, ACTIVATE, DEACTIVATE, DELETE)',
+                required=False,
+                type=OpenApiTypes.STR
+            ),
+            OpenApiParameter(
+                name='performed_by',
+                description='Filter by who performed the action',
+                required=False,
+                type=OpenApiTypes.STR
+            ),
+            OpenApiParameter(
+                name='search',
+                description='Search by rule name, performed_by, or description',
+                required=False,
+                type=OpenApiTypes.STR
+            ),
+        ],
+    )
+    def list(self, request, *args, **kwargs):
+        """List audit log entries with filtering."""
+        return super().list(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary='Get audit logs for a specific rule',
+        description='Retrieve the complete audit trail for a rule.',
+        parameters=[
+            OpenApiParameter(
+                name='rule_id',
+                description='Rule UUID (required)',
+                required=True,
+                type=OpenApiTypes.UUID
+            ),
+        ],
+    )
+    @action(detail=False, methods=['get'])
+    def by_rule(self, request):
+        """Get audit logs for a specific rule."""
+        rule_id = request.query_params.get('rule_id')
+        if not rule_id:
+            return Response(
+                {'error': 'rule_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        logs = self.queryset.filter(rule_id=rule_id)
+        page = self.paginate_queryset(logs)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(logs, many=True)
         return Response(serializer.data)
