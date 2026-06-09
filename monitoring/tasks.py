@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.db.models import Q
 from celery import shared_task
 from .models import Transaction, Rule, Alert
+from .redis_utils import is_alert_duplicate, mark_alert_dedup, check_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,8 @@ def check_large_transaction_rule(transaction, rule):
     """
     Check if a transaction exceeds the configured amount threshold.
     
+    Uses Redis deduplication to prevent duplicate alerts within a time window.
+    
     Args:
         transaction: Transaction instance
         rule: Rule instance
@@ -58,7 +61,15 @@ def check_large_transaction_rule(transaction, rule):
             f"({transaction.amount}) exceeds threshold ({rule.amount_threshold})"
         )
         
-        # Check if alert already exists for this transaction and rule
+        # Check Redis deduplication (60 minute window for large transaction alerts)
+        if is_alert_duplicate(rule.id, transaction.account_id, time_window_minutes=60):
+            logger.info(
+                f"Alert already exists for rule {rule.name} and account {transaction.account_id} "
+                f"(dedup window: 60 minutes)"
+            )
+            return
+        
+        # Check if alert already exists in database (transaction-specific)
         alert_exists = Alert.objects.filter(
             transaction=transaction,
             rule=rule
@@ -75,12 +86,16 @@ def check_large_transaction_rule(transaction, rule):
                     'reason': 'Transaction amount exceeds configured threshold'
                 }
             )
+            # Mark as deduplicated in Redis
+            mark_alert_dedup(rule.id, transaction.account_id, time_window_minutes=60)
             logger.info(f"Alert created for large transaction rule: {transaction.transaction_id}")
 
 
 def check_high_frequency_rule(transaction, rule):
     """
     Check if an account has more than the configured number of transactions in the time window.
+    
+    Uses Redis deduplication to prevent duplicate alerts within a time window.
     
     Args:
         transaction: Transaction instance
@@ -105,24 +120,28 @@ def check_high_frequency_rule(transaction, rule):
             f"({transaction_count}) exceeds limit ({rule.transaction_frequency_limit})"
         )
         
-        # Only create one alert per rule per account per time window
-        # Check if recent alert exists (within last hour)
-        recent_alert_exists = Alert.objects.filter(
-            rule=rule,
-            account_id=transaction.account_id,
-            created_at__gte=timezone.now() - timedelta(hours=1)
-        ).exists()
-        
-        if not recent_alert_exists:
-            Alert.objects.create(
-                rule=rule,
-                transaction=transaction,
-                account_id=transaction.account_id,
-                details={
-                    'transaction_count': transaction_count,
-                    'limit': rule.transaction_frequency_limit,
-                    'time_window_minutes': rule.time_window_minutes,
-                    'reason': f'{transaction_count} transactions in {rule.time_window_minutes} minutes'
-                }
+        # Check Redis deduplication (use rule's time window for dedup)
+        if is_alert_duplicate(rule.id, transaction.account_id, 
+                            time_window_minutes=rule.time_window_minutes):
+            logger.info(
+                f"Alert already exists for rule {rule.name} and account {transaction.account_id} "
+                f"(dedup window: {rule.time_window_minutes} minutes)"
             )
-            logger.info(f"Alert created for high frequency rule: {transaction.account_id}")
+            return
+        
+        # Create alert
+        Alert.objects.create(
+            rule=rule,
+            transaction=transaction,
+            account_id=transaction.account_id,
+            details={
+                'transaction_count': transaction_count,
+                'limit': rule.transaction_frequency_limit,
+                'time_window_minutes': rule.time_window_minutes,
+                'reason': f'{transaction_count} transactions in {rule.time_window_minutes} minutes'
+            }
+        )
+        # Mark as deduplicated in Redis
+        mark_alert_dedup(rule.id, transaction.account_id, 
+                        time_window_minutes=rule.time_window_minutes)
+        logger.info(f"Alert created for high frequency rule: {transaction.account_id}")

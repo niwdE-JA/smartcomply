@@ -3,6 +3,7 @@ API views for the monitoring app.
 
 This module contains ViewSets for managing transactions, rules, and alerts.
 All endpoints support filtering, searching, and pagination.
+Includes rate limiting via custom throttle classes.
 """
 import logging
 from rest_framework import viewsets, status, filters
@@ -17,6 +18,8 @@ from .models import Transaction, Rule, Alert, RuleAuditLog
 from .serializers import TransactionSerializer, RuleSerializer, AlertSerializer, RuleAuditLogSerializer
 from .tasks import evaluate_transaction_rules
 from .audit import create_audit_log, get_field_changes
+from .throttles import TransactionCreateThrottle, RuleManagementThrottle, AlertDismissalThrottle
+from .redis_utils import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
     - Searching by transaction_id and account_id
     - Sorting by timestamp, amount, created_at
     - Automatic async rule evaluation on transaction creation
+    - Rate limiting: 50 transactions per account per minute
     """
     
     queryset = Transaction.objects.all()
@@ -48,6 +52,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
     search_fields = ['transaction_id', 'account_id']
     ordering_fields = ['timestamp', 'amount', 'created_at']
     ordering = ['-timestamp']
+    throttle_classes = [TransactionCreateThrottle]
     
     @extend_schema(
         summary='Create a new transaction',
@@ -177,6 +182,8 @@ class RuleViewSet(viewsets.ModelViewSet):
     - Listing and filtering rules
     - Activating/deactivating rules
     - Rule configuration management
+    - Rate limiting: 30 rule operations per user per hour
+    - Audit trail: All changes tracked with timestamps and performers
     """
     
     queryset = Rule.objects.all()
@@ -187,6 +194,7 @@ class RuleViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['created_at', 'name']
     ordering = ['-created_at']
+    throttle_classes = [RuleManagementThrottle]
     
     @extend_schema(
         summary='Create a new rule',
@@ -291,6 +299,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
     - Searching alerts by account or transaction
     - Marking alerts as reviewed or dismissed
     - Status tracking (ACTIVE, REVIEWED, DISMISSED, RESOLVED)
+    - Rate limiting: 100 alert operations per user per hour
     """
     
     queryset = Alert.objects.all()
@@ -301,6 +310,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['account_id', 'transaction__transaction_id']
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']
+    throttle_classes = [AlertDismissalThrottle]
     
     @extend_schema(
         summary='List all alerts',
@@ -407,6 +417,7 @@ class RuleAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     - When changes were made
     - What was changed (before/after values)
     - Description of the change
+    - Standard rate limiting from global settings
     """
     
     queryset = RuleAuditLog.objects.all()
