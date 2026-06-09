@@ -110,6 +110,44 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
+# drf-spectacular Configuration
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Transaction Monitoring Service API',
+    'DESCRIPTION': 'A backend service for financial transaction monitoring that evaluates monitoring rules and generates alerts when suspicious activity is detected.',
+    'VERSION': '1.0.0',
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.AllowAny'],
+    'SERVERS': [
+        {
+            'url': 'http://localhost:8000',
+            'description': 'Development Server',
+        },
+        {
+            'url': 'https://api.example.com',
+            'description': 'Production Server',
+        },
+    ],
+    'CONTACT': {
+        'name': 'API Support',
+        'email': 'support@example.com',
+    },
+    'LICENSE': {
+        'name': 'Proprietary',
+        'url': 'https://example.com/license',
+    },
+    'SECURITY_SCHEMES': {
+        'bearerAuth': {
+            'type': 'http',
+            'scheme': 'bearer',
+            'bearerFormat': 'JWT',
+        },
+    },
+    'SCHEMA_PATH_PREFIX': '/api/v1/',
+    'DEFAULT_GENERATOR_CLASS': 'drf_spectacular.generators.SchemaGenerator',
+    'PREPROCESSING_HOOKS': [
+        'monitoring.schema.preprocessing_filter_hook',
+    ],
+}
+
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
