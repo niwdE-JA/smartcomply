@@ -239,3 +239,117 @@ class TestHighFrequencyRule:
         
         alerts = Alert.objects.filter(rule=rule, account_id=account_id)
         assert alerts.count() == 0
+
+
+class TestRuleAuditLog:
+    """Tests for RuleAuditLog model."""
+    
+    @pytest.mark.django_db
+    def test_create_audit_log(self):
+        """Test creating an audit log entry."""
+        from monitoring.models import RuleAuditLog
+        
+        rule = Rule.objects.create(
+            name='Test Rule',
+            rule_type='LARGE_TRANSACTION',
+            amount_threshold=Decimal('10000.00'),
+            is_active=True,
+            created_by='test_user'
+        )
+        
+        audit_log = RuleAuditLog.objects.create(
+            rule=rule,
+            action='CREATE',
+            performed_by='test_user',
+            description='Rule created'
+        )
+        
+        assert audit_log.rule == rule
+        assert audit_log.action == 'CREATE'
+        assert audit_log.performed_by == 'test_user'
+        assert audit_log.id is not None
+    
+    @pytest.mark.django_db
+    def test_audit_log_with_changes(self):
+        """Test creating an audit log entry with change tracking."""
+        from monitoring.models import RuleAuditLog
+        
+        rule = Rule.objects.create(
+            name='Test Rule',
+            rule_type='LARGE_TRANSACTION',
+            amount_threshold=Decimal('10000.00'),
+            is_active=True,
+            created_by='test_user'
+        )
+        
+        changes = {
+            'before': {'is_active': True, 'amount_threshold': '10000.00'},
+            'after': {'is_active': False, 'amount_threshold': '10000.00'}
+        }
+        
+        audit_log = RuleAuditLog.objects.create(
+            rule=rule,
+            action='UPDATE',
+            performed_by='test_user',
+            changes=changes,
+            description='Rule deactivated'
+        )
+        
+        assert audit_log.changes == changes
+        assert audit_log.action == 'UPDATE'
+    
+    @pytest.mark.django_db
+    def test_audit_log_ordering(self):
+        """Test that audit logs are ordered by timestamp descending."""
+        from monitoring.models import RuleAuditLog
+        
+        rule = Rule.objects.create(
+            name='Test Rule',
+            rule_type='LARGE_TRANSACTION',
+            amount_threshold=Decimal('10000.00'),
+            is_active=True,
+            created_by='test_user'
+        )
+        
+        # Create multiple audit logs
+        for i in range(3):
+            RuleAuditLog.objects.create(
+                rule=rule,
+                action='UPDATE',
+                performed_by='test_user',
+                description=f'Update {i}'
+            )
+        
+        logs = RuleAuditLog.objects.filter(rule=rule)
+        assert logs.count() == 3
+        
+        # Verify descending order by timestamp
+        log_list = list(logs)
+        for i in range(1, len(log_list)):
+            assert log_list[i-1].timestamp >= log_list[i].timestamp
+    
+    @pytest.mark.django_db
+    def test_audit_log_actions(self):
+        """Test all action types in audit log."""
+        from monitoring.models import RuleAuditLog
+        
+        rule = Rule.objects.create(
+            name='Test Rule',
+            rule_type='LARGE_TRANSACTION',
+            amount_threshold=Decimal('10000.00'),
+            is_active=True,
+            created_by='test_user'
+        )
+        
+        actions = ['CREATE', 'UPDATE', 'ACTIVATE', 'DEACTIVATE', 'DELETE']
+        
+        for action in actions:
+            audit_log = RuleAuditLog.objects.create(
+                rule=rule,
+                action=action,
+                performed_by='test_user',
+                description=f'Rule {action.lower()}'
+            )
+            assert audit_log.action == action
+        
+        assert RuleAuditLog.objects.filter(rule=rule).count() == len(actions)
