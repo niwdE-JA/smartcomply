@@ -13,7 +13,7 @@ from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiTypes
 from .models import Transaction, Rule, Alert, RuleAuditLog
 from .serializers import TransactionSerializer, RuleSerializer, AlertSerializer, RuleAuditLogSerializer
 from .tasks import evaluate_transaction_rules
@@ -60,16 +60,19 @@ class TransactionViewSet(viewsets.ModelViewSet):
         request=TransactionSerializer,
         responses={201: TransactionSerializer},
         examples=[
-            {
-                'request': {
+            OpenApiExample(
+                'Create Transaction',
+                value={
                     'transaction_id': 'TXN001',
                     'account_id': 'ACC123',
                     'amount': '5000.00',
                     'currency': 'USD',
                     'transaction_type': 'TRANSFER',
                     'timestamp': '2026-06-01T10:00:00Z'
-                }
-            }
+                },
+                request_only=True,
+                response_only=False,
+            )
         ]
     )
     def create(self, request, *args, **kwargs):
